@@ -10,7 +10,7 @@ const server = http.createServer((req, res) => {
   res.end(JSON.stringify({
     message: 'Hello Jenkins CI/CD!',
     appName: 'jenkins-node-demo',
-    version: '1.0.0',
+    version: '1.0.1',
     hostname: require('node:os').hostname(),
     path: req.url,
     timestamp: new Date().toISOString()
