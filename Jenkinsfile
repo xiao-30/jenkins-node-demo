@@ -128,18 +128,33 @@ pipeline {
         }
     }
 
-    post {
-        success {
-            echo 'CI/CD 执行成功！'
-            echo 'GitHub 检出、Docker 构建、Harbor 推送、Node.js 部署全部完成。'
-        }
 
-        failure {
-            echo 'CI/CD 执行失败，请检查 Jenkins Console Output。'
-        }
-
-        always {
-            echo "Pipeline 构建编号：${BUILD_NUMBER}"
-        }
+post {
+    always {
+        echo "构建编号：${env.BUILD_NUMBER}"
+        echo "构建结果：${currentBuild.currentResult}"
+        echo "构建地址：${env.BUILD_URL}"
     }
+
+    success {
+        echo 'CI/CD 执行成功！'
+        echo "镜像版本：build-${env.BUILD_NUMBER}"
+        echo 'GitHub、Docker、Harbor、Node.js 部署全部完成。'
+    }
+
+    failure {
+        echo 'CI/CD 执行失败！'
+        echo "失败构建：${env.BUILD_URL}"
+        echo '请检查 Console Output 定位失败阶段。'
+    }
+
+    aborted {
+        echo '流水线已被中止。'
+    }
+
+    cleanup {
+        echo '流水线结束，执行统一清理阶段。'
+    }
+}
+
 }
