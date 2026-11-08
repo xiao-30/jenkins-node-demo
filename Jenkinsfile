@@ -174,75 +174,146 @@ pipeline {
             }
         }
 
-                stage('Deploy Node.js') {
-            when {
-                expression {
-                    params.ENABLE_DEPLOY
-                }
-            }
+        stage('Deploy Node.js') {
+    when {
+        expression {
+            params.ENABLE_DEPLOY
+        }
+    }
 
-            steps {
-                echo "开始部署 ${params.DEPLOY_ENV} 环境..."
+    steps {
+        echo "开始部署 ${params.DEPLOY_ENV} 环境..."
 
-                sh '''
-                    set -eu
+        sh '''
+            set -eu
 
-                    IMAGE="${IMAGE_NAME}:build-${BUILD_NUMBER}"
+            IMAGE="${IMAGE_NAME}:build-${BUILD_NUMBER}"
+            OLD_IMAGE=""
+            NEED_ROLLBACK=0
 
-                    # 校验部署目标
-                    case "${DEPLOY_CONTAINER}:${DEPLOY_PORT}" in
-                        node-demo-dev:3002|node-demo-test:3003)
-                            ;;
-                        *)
-                            echo "错误：不允许的部署目标"
-                            exit 1
-                            ;;
-                    esac
+            # 只允许部署指定环境
+            case "${DEPLOY_CONTAINER}:${DEPLOY_PORT}" in
+                node-demo-dev:3002|node-demo-test:3003)
+                    ;;
+                *)
+                    echo "错误：不允许的部署目标"
+                    exit 1
+                    ;;
+            esac
 
-                    echo "部署镜像：$IMAGE"
-                    echo "部署容器：$DEPLOY_CONTAINER"
-                    echo "部署端口：$DEPLOY_PORT"
+            # 记录当前容器的旧镜像
+            if docker container inspect "$DEPLOY_CONTAINER" >/dev/null 2>&1; then
+                OLD_IMAGE="$(docker inspect \
+                  --format '{{.Config.Image}}' "$DEPLOY_CONTAINER")"
 
-                    # 检查端口是否被其他容器占用
-                    # 检查目标端口是否被其他进程占用
-if ss -lntH "sport = :${DEPLOY_PORT}" | grep -q .; then
-    if ! docker ps --format '{{.Names}} {{.Ports}}' |
-         grep -F "$DEPLOY_CONTAINER " |
-         grep -Fq ":${DEPLOY_PORT}->"; then
-        echo "错误：端口 ${DEPLOY_PORT} 已被占用"
-        exit 1
-    fi
-fi
+                echo "当前运行镜像：$OLD_IMAGE"
+            else
+                echo "首次部署：没有旧容器"
+            fi
 
-                    # 删除当前环境的旧容器
-                    if docker container inspect "$DEPLOY_CONTAINER" >/dev/null 2>&1; then
-                        docker rm -f "$DEPLOY_CONTAINER"
+            # 确认旧镜像可以用于回滚
+            if [ -n "$OLD_IMAGE" ]; then
+                docker image inspect "$OLD_IMAGE" >/dev/null
+            fi
+
+            # 如果目标端口已被占用，必须确认是当前目标容器
+            if ss -lntH "sport = :${DEPLOY_PORT}" | grep -q .; then
+                if ! docker ps --format '{{.Names}} {{.Ports}}' |
+                     grep -F "$DEPLOY_CONTAINER " |
+                     grep -Fq ":${DEPLOY_PORT}->"; then
+                    echo "错误：目标端口已被其他进程占用"
+                    exit 1
+                fi
+            fi
+
+            echo "准备部署新镜像：$IMAGE"
+
+            # 删除旧容器
+            if docker container inspect "$DEPLOY_CONTAINER" >/dev/null 2>&1; then
+                NEED_ROLLBACK=1
+                docker rm -f "$DEPLOY_CONTAINER"
+            fi
+
+            # 尝试部署新版本
+            if (
+                set -e
+
+                docker run -d \
+                  --name "$DEPLOY_CONTAINER" \
+                  --restart unless-stopped \
+                  -p "${DEPLOY_PORT}:3000" \
+                  "$IMAGE"
+
+                # 最多检查 10 次，每次间隔 2 秒
+                HEALTHY=0
+
+                for i in $(seq 1 10); do
+                    if [ "$(docker inspect \
+       --format '{{.State.Running}}' \
+       "$DEPLOY_CONTAINER" 2>/dev/null)" = "true" ] &&
+   curl --fail --silent --show-error \
+     --max-time 3 \
+     "http://127.0.0.1:${DEPLOY_PORT}" >/dev/null; then
+
+                        HEALTHY=1
+                        break
                     fi
 
-                    # 启动当前环境的新容器
-                    docker run -d \
-                      --name "$DEPLOY_CONTAINER" \
-                      --restart unless-stopped \
-                      -p "${DEPLOY_PORT}:3000" \
-                      "$IMAGE"
+                    sleep 2
+                done
 
-                    # 等待应用启动
-                    sleep 3
+                [ "$HEALTHY" -eq 1 ]
+            ); then
+                echo "新版本部署成功：$IMAGE"
+            else
+                echo "新版本部署失败！"
 
-                    # 检查容器运行状态
-                    docker inspect \
-                      --format '{{.State.Running}}' \
-                      "$DEPLOY_CONTAINER" | grep -qx true
+                if [ "$NEED_ROLLBACK" -eq 1 ] && [ -n "$OLD_IMAGE" ]; then
+                    echo "开始回滚到：$OLD_IMAGE"
 
-                    # 验证 HTTP 接口
-                    curl --fail --silent --show-error \
-                      "http://127.0.0.1:${DEPLOY_PORT}"
+                    docker rm -f "$DEPLOY_CONTAINER" >/dev/null 2>&1 || true
 
-                    echo ""
-                    echo "${DEPLOY_CONTAINER} 自动部署成功！"
-                '''
-            }
-        }
+                    if docker run -d \
+                        --name "$DEPLOY_CONTAINER" \
+                        --restart unless-stopped \
+                        -p "${DEPLOY_PORT}:3000" \
+                        "$OLD_IMAGE"; then
+
+                        ROLLBACK_OK=0
+
+                        for i in $(seq 1 10); do
+                            if [ "$(docker inspect \
+       --format '{{.State.Running}}' \
+       "$DEPLOY_CONTAINER" 2>/dev/null)" = "true" ] &&
+   curl --fail --silent --show-error \
+     --max-time 3 \
+     "http://127.0.0.1:${DEPLOY_PORT}" >/dev/null; then
+
+                                ROLLBACK_OK=1
+                                break
+                            fi
+
+                            sleep 2
+                        done
+
+                        if [ "$ROLLBACK_OK" -eq 1 ]; then
+                            echo "旧版本恢复成功：$OLD_IMAGE"
+                        else
+                            echo "严重错误：回滚容器未通过健康检查"
+                        fi
+                    else
+                        echo "严重错误：旧版本容器启动失败"
+                    fi
+                else
+                    echo "没有可用的旧版本，无法自动回滚"
+                fi
+
+                # 新版本部署失败，始终让 Jenkins 标记为 FAILURE
+                exit 1
+            fi
+        '''
+    }
+}
 
    }
 
