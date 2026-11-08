@@ -32,7 +32,6 @@ pipeline {
     environment {
         REGISTRY = '192.168.220.142'
         IMAGE_NAME = '192.168.220.142/devops-study/node-demo'
-        CONTAINER_NAME = 'harbor-node-demo'
     }
 
 
@@ -63,6 +62,34 @@ pipeline {
         }
 
         echo "镜像版本参数校验通过：${env.IMAGE_TAG}"
+    }
+}
+
+        stage('Configure Deploy Environment') {
+    steps {
+        script {
+            switch (params.DEPLOY_ENV) {
+                case 'dev':
+                    env.DEPLOY_CONTAINER = 'node-demo-dev'
+                    env.DEPLOY_PORT = '3002'
+                    break
+
+                case 'test':
+                    env.DEPLOY_CONTAINER = 'node-demo-test'
+                    env.DEPLOY_PORT = '3003'
+                    break
+
+                case 'prod':
+                    error('生产环境暂不允许自动部署，请先配置审批流程')
+
+                default:
+                    error("不支持的部署环境：${params.DEPLOY_ENV}")
+            }
+
+            echo "部署环境：${params.DEPLOY_ENV}"
+            echo "部署容器：${env.DEPLOY_CONTAINER}"
+            echo "部署端口：${env.DEPLOY_PORT}"
+        }
     }
 }
 
@@ -147,30 +174,56 @@ pipeline {
             }
         }
 
-        stage('Deploy Node.js') {
-                when {
-        expression {
-            params.ENABLE_DEPLOY
-        }
-    }
+                stage('Deploy Node.js') {
+            when {
+                expression {
+                    params.ENABLE_DEPLOY
+                }
+            }
+
             steps {
-                echo '开始自动部署 Node.js...'
+                echo "开始部署 ${params.DEPLOY_ENV} 环境..."
 
                 sh '''
                     set -eu
 
                     IMAGE="${IMAGE_NAME}:build-${BUILD_NUMBER}"
 
-                    # 删除旧容器
-                    if docker container inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
-                        docker rm -f "$CONTAINER_NAME"
+                    # 校验部署目标
+                    case "${DEPLOY_CONTAINER}:${DEPLOY_PORT}" in
+                        node-demo-dev:3002|node-demo-test:3003)
+                            ;;
+                        *)
+                            echo "错误：不允许的部署目标"
+                            exit 1
+                            ;;
+                    esac
+
+                    echo "部署镜像：$IMAGE"
+                    echo "部署容器：$DEPLOY_CONTAINER"
+                    echo "部署端口：$DEPLOY_PORT"
+
+                    # 检查端口是否被其他容器占用
+                    # 检查目标端口是否被其他进程占用
+if ss -lntH "sport = :${DEPLOY_PORT}" | grep -q .; then
+    if ! docker ps --format '{{.Names}} {{.Ports}}' |
+         grep -F "$DEPLOY_CONTAINER " |
+         grep -Fq ":${DEPLOY_PORT}->"; then
+        echo "错误：端口 ${DEPLOY_PORT} 已被占用"
+        exit 1
+    fi
+fi
+
+                    # 删除当前环境的旧容器
+                    if docker container inspect "$DEPLOY_CONTAINER" >/dev/null 2>&1; then
+                        docker rm -f "$DEPLOY_CONTAINER"
                     fi
 
-                    # 启动新容器
+                    # 启动当前环境的新容器
                     docker run -d \
-                      --name "$CONTAINER_NAME" \
+                      --name "$DEPLOY_CONTAINER" \
                       --restart unless-stopped \
-                      -p 3001:3000 \
+                      -p "${DEPLOY_PORT}:3000" \
                       "$IMAGE"
 
                     # 等待应用启动
@@ -179,19 +232,19 @@ pipeline {
                     # 检查容器运行状态
                     docker inspect \
                       --format '{{.State.Running}}' \
-                      "$CONTAINER_NAME" | grep -qx true
+                      "$DEPLOY_CONTAINER" | grep -qx true
 
                     # 验证 HTTP 接口
                     curl --fail --silent --show-error \
-                      http://127.0.0.1:3001
+                      "http://127.0.0.1:${DEPLOY_PORT}"
 
                     echo ""
-                    echo "Node.js 自动部署成功！"
+                    echo "${DEPLOY_CONTAINER} 自动部署成功！"
                 '''
             }
         }
-    }
 
+   }
 
 post {
     always {
