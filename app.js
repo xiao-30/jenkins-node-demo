@@ -4,9 +4,9 @@ const PORT = process.env.PORT || 3000;
 
 const server = http.createServer((req, res) => {
   // 仅用于 Jenkins 自动回滚故障模拟
-res.writeHead(503, {
-  'Content-Type': 'application/json; charset=utf-8'
-});
+  res.writeHead(200, {
+    'Content-Type': 'application/json; charset=utf-8'
+  });
 
   res.end(JSON.stringify({
     message: 'Hello Jenkins CI/CD!',
