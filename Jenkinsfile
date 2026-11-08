@@ -2,6 +2,27 @@
 pipeline {
     agent any
 
+
+    parameters {
+        choice(
+            name: 'DEPLOY_ENV',
+            choices: ['dev', 'test', 'prod'],
+            description: '请选择部署环境'
+        )
+
+        string(
+            name: 'IMAGE_TAG',
+            defaultValue: 'latest',
+            description: '请输入 Docker 镜像版本'
+        )
+
+        booleanParam(
+            name: 'ENABLE_DEPLOY',
+            defaultValue: true,
+            description: '是否执行自动部署'
+        )
+    }
+
     options {
         skipDefaultCheckout(true)
         timestamps()
@@ -14,7 +35,17 @@ pipeline {
         CONTAINER_NAME = 'harbor-node-demo'
     }
 
+
     stages {
+        stage('Show Build Parameters') {
+            steps {
+                echo "部署环境：${params.DEPLOY_ENV}"
+                echo "镜像版本参数：${params.IMAGE_TAG}"
+                echo "是否自动部署：${params.ENABLE_DEPLOY}"
+                echo "Jenkins 构建编号：${env.BUILD_NUMBER}"
+            }
+        }
+
         stage('Checkout GitHub') {
             steps {
                 echo '开始检出 GitHub 项目代码...'
@@ -89,6 +120,11 @@ pipeline {
         }
 
         stage('Deploy Node.js') {
+                when {
+        expression {
+            params.ENABLE_DEPLOY
+        }
+    }
             steps {
                 echo '开始自动部署 Node.js...'
 
@@ -139,7 +175,14 @@ post {
     success {
         echo 'CI/CD 执行成功！'
         echo "镜像版本：build-${env.BUILD_NUMBER}"
-        echo 'GitHub、Docker、Harbor、Node.js 部署全部完成。'
+
+        script {
+            if (params.ENABLE_DEPLOY) {
+                echo 'GitHub、Docker、Harbor、Node.js 部署全部完成。'
+            } else {
+                echo 'GitHub、Docker、Harbor 已完成，Node.js 部署已跳过。'
+            }
+        }
     }
 
     failure {
