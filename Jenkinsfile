@@ -46,6 +46,26 @@ pipeline {
             }
         }
 
+	stage('Validate Image Tag') {
+    steps {
+        script {
+            def tag = params.IMAGE_TAG?.trim()
+
+            if (!tag || !(tag ==~ /[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}/)) {
+                error("IMAGE_TAG 格式不合法：只能使用字母、数字、下划线、点和横线，且长度不超过 128")
+            }
+
+            if (tag != params.IMAGE_TAG) {
+                error("IMAGE_TAG 不能包含首尾空格")
+            }
+
+            env.IMAGE_TAG = tag
+        }
+
+        echo "镜像版本参数校验通过：${env.IMAGE_TAG}"
+    }
+}
+
         stage('Checkout GitHub') {
             steps {
                 echo '开始检出 GitHub 项目代码...'
@@ -72,19 +92,26 @@ pipeline {
         }
 
         stage('Build Docker Image') {
-            steps {
-                echo '开始构建 Docker 镜像...'
+    steps {
+        echo '开始构建 Docker 镜像...'
 
-                sh '''
-                    set -eu
+        sh '''
+            set -eu
 
-                    docker build \
-                      -t "${IMAGE_NAME}:build-${BUILD_NUMBER}" .
+            IMAGE_VERSION="${IMAGE_NAME}:${IMAGE_TAG}"
+            IMAGE_BUILD="${IMAGE_NAME}:build-${BUILD_NUMBER}"
 
-                    echo "Docker 镜像构建成功！"
-                '''
-            }
-        }
+            docker build \
+              -t "$IMAGE_VERSION" \
+              -t "$IMAGE_BUILD" \
+              .
+
+            echo "Docker 镜像构建成功！"
+            echo "业务版本：$IMAGE_VERSION"
+            echo "构建版本：$IMAGE_BUILD"
+        '''
+    }
+}
 
         stage('Push Image to Harbor') {
             steps {
@@ -110,8 +137,9 @@ pipeline {
                             --username "$HARBOR_USER" \
                             --password-stdin
 
-                        docker push \
-                          "${IMAGE_NAME}:build-${BUILD_NUMBER}"
+                        docker push "${IMAGE_NAME}:${IMAGE_TAG}"
+
+			docker push "${IMAGE_NAME}:build-${BUILD_NUMBER}"
 
                         echo "Harbor 镜像推送成功！"
                     '''
@@ -174,7 +202,8 @@ post {
 
     success {
         echo 'CI/CD 执行成功！'
-        echo "镜像版本：build-${env.BUILD_NUMBER}"
+        echo "业务镜像版本：${params.IMAGE_TAG}"
+	echo "Jenkins 构建版本：build-${env.BUILD_NUMBER}"
 
         script {
             if (params.ENABLE_DEPLOY) {
