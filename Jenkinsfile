@@ -128,10 +128,12 @@ pipeline {
             IMAGE_VERSION="${IMAGE_NAME}:${IMAGE_TAG}"
             IMAGE_BUILD="${IMAGE_NAME}:build-${BUILD_NUMBER}"
 
-            docker build \
-              -t "$IMAGE_VERSION" \
-              -t "$IMAGE_BUILD" \
-              .
+            docker buildx build \
+  --load \
+  --progress=plain \
+  -t "$IMAGE_VERSION" \
+  -t "$IMAGE_BUILD" \
+  .
 
             echo "Docker 镜像构建成功！"
             echo "业务版本：$IMAGE_VERSION"
