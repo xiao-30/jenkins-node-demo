@@ -174,6 +174,21 @@ pipeline {
             }
         }
 
+       stage('Manual Approval') {
+    when {
+        expression {
+            params.ENABLE_DEPLOY &&
+            params.DEPLOY_ENV == 'test'
+        }
+    }
+
+    steps {
+        timeout(time: 10, unit: 'MINUTES') {
+            input message: '确认部署到 test 测试环境吗？',
+                  ok: '批准部署'
+        }
+    }
+}
         stage('Deploy Node.js') {
     when {
         expression {
