@@ -141,38 +141,37 @@ pipeline {
 }
 
         stage('Push Image to Harbor') {
-            steps {
-                echo '开始推送 Docker 镜像到 Harbor...'
+    steps {
+        echo '开始推送 Docker 镜像到 Harbor...'
 
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'harbor-robot',
-                        usernameVariable: 'HARBOR_USER',
-                        passwordVariable: 'HARBOR_PASSWORD'
-                    )
-                ]) {
-                    sh '''
-                        set -eu
-                        set +x
+        withCredentials([
+            usernamePassword(
+                credentialsId: 'harbor-robot',
+                usernameVariable: 'HARBOR_USER',
+                passwordVariable: 'HARBOR_PASSWORD'
+            )
+        ]) {
+            sh '''
+                set -eu
+                set +x
 
-                        export DOCKER_CONFIG="$(mktemp -d)"
+                export DOCKER_CONFIG="$(mktemp -d)"
 
-                        trap 'docker logout "$REGISTRY" >/dev/null 2>&1 || true; rm -rf "$DOCKER_CONFIG"' EXIT
+                trap 'docker logout "$REGISTRY" >/dev/null 2>&1 || true; rm -rf "$DOCKER_CONFIG"' EXIT
 
-                        printf '%s' "$HARBOR_PASSWORD" | \
-                          docker login "$REGISTRY" \
-                            --username "$HARBOR_USER" \
-                            --password-stdin
+                printf '%s' "$HARBOR_PASSWORD" | \
+                  docker login "$REGISTRY" \
+                    --username "$HARBOR_USER" \
+                    --password-stdin
 
-                        docker push "${IMAGE_NAME}:${IMAGE_TAG}"
+                docker push "${IMAGE_NAME}:${IMAGE_TAG}"
+                docker push "${IMAGE_NAME}:build-${BUILD_NUMBER}"
 
-			docker push "${IMAGE_NAME}:build-${BUILD_NUMBER}"
-
-                        echo "Harbor 镜像推送成功！"
-                    '''
-                }
-            }
+                echo "Harbor 镜像推送成功！"
+            '''
         }
+    }
+}
 
        stage('Manual Approval') {
     when {
