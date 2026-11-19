@@ -18,8 +18,8 @@ pipeline {
 
         booleanParam(
             name: 'ENABLE_DEPLOY',
-            defaultValue: true,
-            description: '是否执行自动部署'
+            defaultValue: false,
+            description: '是否执行自动部署,默认不部署'
         )
     }
 
